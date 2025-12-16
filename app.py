@@ -2,8 +2,8 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 import requests
 import os
-from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from database import init_db, add_tracker, list_trackers, store_positions, get_positions
 
@@ -13,10 +13,11 @@ API_URL = "http://98.93.133.125:3000/position"
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# ---- DB INIT ----
 init_db()
 
+# ---- TRACKER UPDATE LOGIC ----
 def update_tracker(serial):
-    """Fetch & store latest tracker positions"""
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {TOKEN}"
@@ -26,25 +27,24 @@ def update_tracker(serial):
     try:
         response = requests.post(API_URL, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            store_positions(serial, data)
+            store_positions(serial, response.json())
         else:
             print(f"API error for {serial}: {response.status_code}")
     except Exception as e:
         print(f"Update failed for {serial}: {e}")
 
 def update_all_trackers():
-    """Poll API for all trackers periodically"""
     print("Updating all trackers...")
     for serial in list_trackers():
         update_tracker(serial)
 
-# Auto-update every 60s
+# ---- SCHEDULER ----
 scheduler = BackgroundScheduler()
-scheduler.add_job(func=update_all_trackers, trigger="interval", seconds=60)
+scheduler.add_job(update_all_trackers, "interval", seconds=60)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
+# ---- ROUTES ----
 @app.route("/add/<serial>", methods=["GET", "POST"])
 def add_tracker_route(serial):
     add_tracker(serial)
@@ -65,7 +65,7 @@ def data(serial):
     rows = get_positions(serial)
     features = []
 
-    for (ts, lat, lng, conf) in rows:
+    for ts, lat, lng, conf in rows:
         features.append({
             "type": "Feature",
             "properties": {
@@ -98,7 +98,8 @@ def stats():
         }
     return jsonify(stats_data)
 
+# ---- ENTRYPOINT ----
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
-    print(f"API running on port: {port}")
+    print(f"API running on port {port}")
     app.run(host="0.0.0.0", port=port)
